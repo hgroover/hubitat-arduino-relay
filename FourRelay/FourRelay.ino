@@ -5,7 +5,19 @@
  using an Arduino Wiznet Ethernet shield. 
  
  Circuit:
- * Ethernet shield attached to pins 10, 11, 12, 13
+ * Ethernet shield attached
+ * SainSmart 4 Relay Module connected as follows
+   relay   arduino
+   VCC ->  5V
+   GND ->  GND
+   IN1 ->  D6
+   IN2 ->  D7
+   IN3 ->  D8
+   IN4 ->  D9
+ * Power via USB from a 2A+ USB adapter. Note that 12V barrel adapter supplies
+   rely on the Arduino onboard converter, which often fails on cheaper knockoffs
+   like the Elegoo Uno R3. The 5V pass-thru should support the needs of the
+   SainSmart relay board, which has relatively high current requirements.
  
  created 18 Dec 2009
  by David A. Mellis
@@ -20,11 +32,8 @@
 #include <SPI.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
-// This is the older dht11 library. The newer DHT library (supporting both dht11 and dht22)
-// also requires the Adafruit Unified Sensor Library and has slightly different usage.
-#include <dht11.h>
 
-#define VERSION_STR  "1.0.12b"
+#define VERSION_STR  "1.0.13"
 // Offset from UTC to local standard time in seconds (e.g. Los Angeles is -8 hours or -28800 seconds; New Delhi, 19800
 // No DST - plants don't care about civic time
 //const long utcOffset = -28800; // PST
@@ -45,8 +54,6 @@ const long utcOffset = -21600; // CST
 // Startup self-test
 #define WITH_TEST  0
 
-dht11 DHT11;
-
 const int buttonPin = 2;     // the number of the pushbutton pin
 const int ledPin = 13;       // blinkenlights normally 13 (also used by on-board LED)
 const int temperaturePinShort = A0; // Number of analog thermistor pin on short lead
@@ -56,12 +63,17 @@ int relayPin1 = 7;                 // IN1 connected to digital pin 7
 int relayPin2 = 6;                 // IN2 connected to digital pin 8
 int relayPin3 = 9;
 int relayPin4 = 8;
-int dhtPin = 3;
 
 int heater1On = 0; // Heater 1 on when below this temperature
 int heater1Off = 15; // Heater 1 off when above this temperature
 int heater2On = 0; // Heater 2 on when below this temperature
 int heater2Off = 10; // Heater 2 off when above this temperature
+
+// Requested relay states
+int r1state = 0; // Relay 1 aka a
+int r2state = 0; // Relay 2 aka b
+int r3state = 0; // Relay 3 aka c
+int r4state = 0; // Relay 4 aka d
 
 int pins[] = { 7, 6, 9, 8 };
 
@@ -99,15 +111,11 @@ unsigned long requestSerial = 1;
 // Measure last 3 thermistor readings to determine validity
 float lastTemp[3];
 float lastTemp2[3];
-int lastDHT[3];
-int lastHum[3];
 int lastTempIdx = 0;
 int lastTemp2Idx = 0;
-int lastDHTIdx = 0;
 
 int hasTherm1 = 0;
 int hasTherm2 = 0;
-int hasDHT = 0;
 
 unsigned long decTime;
 int hms_hour = 0;
@@ -164,16 +172,16 @@ EthernetUDP Udp;
 EthernetClient client;
 // Initialize the Ethernet server library
 // with the IP address and port you want to use
-// (port 80 is default for HTTP):
-EthernetServer server(80);
+// port 8981 needs to be set in Hubitat code as well
+EthernetServer server(8981);
 
 int hasNet = 0;
 int relayTestState = 0; // if 1, cycle through relays on startup
 unsigned long ntpState = 0;
 
-// 4.91 if input is USB power (5V)
-// 5.0 if using recommended 12V input power
-float vcc = 5.0;                       // only used for display purposes, if used
+// 4.91 if input is USB power (5V) (recommended for use with relay board)
+// 5.0 if using 12V input power
+float vcc = 4.91;                       // only used for display purposes, if used
                                         // set to the measured Vcc.
 float pad = 9850;                       // balance/pad resistor value, set this to
                                         // the measured resistance of your pad resistor
@@ -286,18 +294,6 @@ void setup() {
  
   Serial.println( "Relay mgr v" VERSION_STR );
   //Serial.println( "Local times are in non-civic standard time (no DST adjustment)" );
-  
-  int checkDHT = DHT11.read(dhtPin);
-  if (checkDHT == DHTLIB_OK)
-  {
-    Serial.println( "Has DHT11" );
-    lastDHT[lastDHTIdx] = -70;
-    hasDHT = 1;
-  }
-  else
-  {
-    Serial.println( "DHT11 not detected" );
-  }
   
   // start the Ethernet connection; omit static IP to use DHCP
   //if (Ethernet.begin(mac, staticIP) == 0) {
@@ -500,7 +496,7 @@ int loop_dhcp()
 } // loop_dhcp()
 
 
-int loop_webserver()
+int loop_tcpserver()
 {
     EthernetClient client = server.available();
     if (!client) return 0;
@@ -511,143 +507,30 @@ int loop_webserver()
     String curLine;
     while (client.connected()) 
     {
-      if (client.available()) 
+      while (client.available()) 
       {
         char c = client.read();
-        //Serial.write(c);
-        // if you've gotten to the end of the line (received a newline
-        // character) and the line is blank, the http request has ended,
-        // so you can send a reply
-        if (c == '\n' && currentLineIsBlank) {
-          // send a standard http response header
-          client.println("HTTP/1.1 200 OK");
-          client.println("Content-Type: text/html");
-          client.println("Connection: close");  // the connection will be closed after completion of the response
-          client.println("Refresh: 120; url=/?r=" + String(time_utc_sec));  // refresh the page automatically every 2m
-          client.println();
-          client.println("<!DOCTYPE HTML>");
-          client.println("<html>");
-          // output the value of each analog input pin
-          /***
-          for (int analogChannel = 0; analogChannel < 6; analogChannel++) {
-            int sensorReading = analogRead(analogChannel);
-            client.print("analog input ");
-            client.print(analogChannel);
-            client.print(" is ");
-            client.print(sensorReading);
-            client.println("<br />");
-          }
-          ****/
-          unsigned long curMillis = millis();
-          client.println( "<h5>GHmgr v" VERSION_STR " " + hms(time_utc_sec + utcOffset) + " " + String(time_utc_sec + utcOffset) + " " + SecondsPlusMS(time_utc_sec, time_utc_ms) + " " + SecondsPlusMS(ntpState/1000, ntpState%1000) + " " + SecondsPlusMS(curMillis/1000, curMillis%1000) + " " + SecondsPlusMS(lastNtpCheck/1000, lastNtpCheck%1000) + "</h5>" );
-          client.println( "<h6>Current</h6>" );
-          client.print( "<p>In: ");
-          client.print( lastDHT[lastDHTIdx] );
-          client.print( " h1{" + String(heater1On) + "," + String(heater1Off) + "}" );
-          client.print( " lton{" + String(dectime_lights_on) + "," + String(dectime_lights_off) + "}" );
-          //client.print( " h2{" + String(heater2On)+","+String(heater2Off)+"}");
-          client.print( "</p><p>Hum: ");
-          client.print( lastHum[lastDHTIdx] );
-          client.println( "</p>" );
-          if (hasTherm1)
-          {
-            client.print( "<p>Out: " );
-            client.print( outsideTemp );
-            client.println( "</p>" );
-          }
-          if (hasTherm2)
-          {
-            client.print( "<p>Water: " );
-            client.print( waterTemp );
-            client.println( "</p>" );
-          }
-          client.println( "<p>Relays: " + String(relaySetting[0]) + "," + String(relaySetting[1]) + "," + String(relaySetting[2]) + "," + String(relaySetting[3]) + "</p>");
-          client.println( "<p>NTP last: " + String(ntpLastTime) + ", pkt " + String(ntpPacketSize) + "</p>" );
-          client.println( "<h6>History " + String(SAMPLE_INTERVAL) + "</h6>" );
-          dumpHist( &client, "In", insideHist );
-          if (hasTherm1) dumpHist( &client, "Out", outsideHist );
-          if (hasTherm2) dumpHist( &client, "Water", waterHist );
-          dumpHist( &client, "Hum", humidHist );
-          dumpRelayHist( &client, settingHist );
-          client.println("</html>");
-          break;
-        }
-        if (c == '\n') {
-          // you're starting a new line
-          currentLineIsBlank = true;
-          if (curLine.startsWith("GET /"))
-          {
-            curLine = curLine.substring(4);
-            int spaceSep = curLine.indexOf(' ');
-            if (spaceSep > 0) curLine = curLine.substring(0,spaceSep);
-            //Serial.println( "Got: " + curLine );
-            // Handle /off=n, /on=n, /auto=n
-            long arg = 0;
-            int argSep = curLine.indexOf('=');
-            if (argSep > 0)
-            {
-              arg = curLine.substring(argSep+1).toInt();
-              {
-                curLine = curLine.substring(1,argSep);
-                //Serial.println( "Cmd: [" + curLine + "]" );
-                if (curLine == "on" && arg > 0 && arg <= 4)
-                {
-                  digitalWrite(pins[arg-1], LOW);
-                  relaySetting[arg-1] = 3;
-                }
-                else if (curLine == "off" && arg > 0 && arg <= 4)
-                {
-                  digitalWrite(pins[arg-1], HIGH);
-                  relaySetting[arg-1] = 2;
-                }
-                else if (curLine == "auto" && arg > 0 && arg <= 4)
-                {
-                  digitalWrite(pins[arg-1], HIGH);
-                  relaySetting[arg-1] = 0;
-                }
-                else if (curLine == "sim")
-                {
-                  simulate = arg;
-                }
-                else if (curLine == "h1on")
-                {
-                  heater1On = arg;
-                }
-                else if (curLine == "h1off")
-                {
-                  heater1Off = arg;
-                }
-                else if (curLine == "h2on")
-                {
-                  heater2On = arg;
-                }
-                else if (curLine == "h2off")
-                {
-                  heater2Off = arg;
-                }
-                else if (curLine == "lton")
-                {
-                  dectime_lights_on = arg;
-                }
-                else if (curLine == "ltoff")
-                {
-                  dectime_lights_off = arg;
-                }
-                //else Serial.println("n/r");
-              }
-            }
-          }
-          curLine = "";
-        } else if (c != '\r') {
-          // you've gotten a character on the current line
-          currentLineIsBlank = false;
-          curLine += c;
-        }
-      } // client available
+        curLine += c;
+      }
+      if (curLine.length() > 0)
+      {
+        Serial.println(curLine);
+        if (curLine.indexOf("a=1")>=0) r1state = 1;
+        else if (curLine.indexOf("a=0")>=0) r1state = 0;
+        if (curLine.indexOf("b=1")>=0) r2state = 1;
+        else if (curLine.indexOf("b=0")>=0) r2state = 0;
+        if (curLine.indexOf("c=1")>=0) r3state = 1;
+        else if (curLine.indexOf("c=0")>=0) r3state = 0;
+        if (curLine.indexOf("d=1")>=0) r4state = 1;
+        else if (curLine.indexOf("d=0")>=0) r4state = 0;
+        String s;
+        s = "a=" + String(r1state) + ";b=" + String(r2state) +  ";c=" + String(r3state) + ";d=" + String(r4state) + " #rcvd:" + curLine;
+        client.println(s);
+      }
     } // while connected
     
     // give the web browser time to receive the data
-    delay(1);
+    //delay(1);
     // close the connection:
     client.stop();
     //Serial.println("client disconnected");
@@ -671,30 +554,6 @@ int loop_sample()
       lastButtonState = buttonState;
     }
 #endif
-  if (DHT11.read(dhtPin) == DHTLIB_OK)
-  {
-    insideTemp = DHT11.temperature;
-    if (DHT11.temperature != lastDHT[lastDHTIdx] || 
-        DHT11.humidity != lastHum[lastDHTIdx])
-        {
-    //Serial.print("Humidity: ");
-    //Serial.print(DHT11.humidity);
-    //Serial.print( "% Temp(C): ");
-    //Serial.println(DHT11.temperature);
-          lastDHTIdx = (lastDHTIdx + 1) % 3;
-          lastDHT[lastDHTIdx] = DHT11.temperature;
-          lastHum[lastDHTIdx] = DHT11.humidity;
-        }
-  }
-  if (simulate)
-  {
-    insideTemp = simulate;
-  }
-  else
-  {
-    insideTemp = lastDHT[lastDHTIdx];
-  }
-  humidity = lastHum[lastDHTIdx];
   // Temp is outside thermistor (if connected)
   if (Temp < -30 || Temp > 80)
   {
@@ -721,6 +580,7 @@ int loop_sample()
     waterTemp = Temp2;
   }
   ***/
+  insideTemp = Temp;
   return 0;
 } // loop_sample()
 
@@ -790,15 +650,13 @@ int loop_task()
   // Minimum delta is 1s
   if (time_delta < 0) lastChange = time_utc_sec; // Handle time wrap
   if (time_delta < 1) return 0;
-  setHeater( 0, heater1On, heater1Off );
-  //setHeater( 1, heater2On, heater2Off );
+  setRelay( 0, r1state );
+  setRelay( 1, r2state );
+  setRelay( 2, r3state );
+  setRelay( 3, r4state );
   hms(time_utc_sec + utcOffset);
   decTime = hms_hour * 10000L + hms_minute * 100L + hms_second;
   //Serial.println("tus=" + String(time_utc_sec) + " hms " + String(hms_hour) + ":" + String(hms_minute) + " dt " + String(decTime));
-  // Relay 1 is light, on at 700, off at 1800
-  timedValve( 1, decTime, dectime_lights_on, dectime_lights_off, 0 );
-  // No valve currently
-  //timedValve( 3, decTime, 73000, 73100, 9 );
   lastChange = time_utc_sec;
   // 1-minute
   // 5-minute
@@ -869,29 +727,27 @@ void loop()
 
   loop_led();  
   loop_dhcp();
-  loop_webserver();
+  loop_tcpserver();
 
 }
 
-// Set power relay for heater based on low (on) temp
-// and high (off) temp
-int setHeater( int index, int lowTemp, int highTemp )
+// Set power relay
+int setRelay( int index, int on )
 {
-  // Manual?
-  if (relaySetting[index] & 0x02) return 0;
-  // Enforce minimum quiet time of 10s before turning on and 30s before turning off
-  if (insideTemp < lowTemp && relaySetting[index] == 0 && time_utc_sec - lastRelayChange[index] >= 10)
+  if (relaySetting[index] == on) return 0;
+  // Optionally we could gate this with entropy check
+  if (on)
   {
     digitalWrite( pins[index], LOW );
-    Serial.println( "H on " + String(index)  + " p" + String(pins[index]) );
+    Serial.println( "R on " + String(index)  + " p" + String(pins[index]) );
     relaySetting[index] = 1;
     lastRelayChange[index] = time_utc_sec;
     return 1;
   }
-  else if (insideTemp > highTemp && relaySetting[index] == 1 && time_utc_sec - lastRelayChange[index] >= 30)
+  else 
   {
     digitalWrite( pins[index], HIGH );
-    Serial.println( "H off " + String(index) + " p" + String(pins[index]) );
+    Serial.println( "R off " + String(index) + " p" + String(pins[index]) );
     relaySetting[index] = 0;
     lastRelayChange[index] = time_utc_sec;
     return 1;
