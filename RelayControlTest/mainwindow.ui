@@ -118,6 +118,38 @@
      <bool>true</bool>
     </property>
    </widget>
+   <widget class="QPushButton" name="btn250ms">
+    <property name="geometry">
+     <rect>
+      <x>130</x>
+      <y>60</y>
+      <width>75</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="toolTip">
+     <string>Close relay 1 for 250ms</string>
+    </property>
+    <property name="text">
+     <string>250ms</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="btn500ms">
+    <property name="geometry">
+     <rect>
+      <x>220</x>
+      <y>60</y>
+      <width>75</width>
+      <height>23</height>
+     </rect>
+    </property>
+    <property name="toolTip">
+     <string>Close relay 1 for 500ms</string>
+    </property>
+    <property name="text">
+     <string>500ms</string>
+    </property>
+   </widget>
   </widget>
   <widget class="QMenuBar" name="menuBar">
    <property name="geometry">

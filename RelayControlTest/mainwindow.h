@@ -31,9 +31,15 @@ private slots:
 
     void on_chkRelay4_clicked(bool checked);
 
+    void on_btn250ms_clicked();
+
+    void on_btn500ms_clicked();
+
 private:
     Ui::MainWindow *ui;
     QUdpSocket m_udpListener;
+    int m_relay1Value;
+    int m_requestSerial;
 
 };
 
