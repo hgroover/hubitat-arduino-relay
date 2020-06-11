@@ -33,7 +33,10 @@
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 
-#define VERSION_STR  "1.0.13"
+// Maximum length of VERSION_STR is 12
+#define VERSION_STR  "1.0.14"
+String version = VERSION_STR;
+
 // Offset from UTC to local standard time in seconds (e.g. Los Angeles is -8 hours or -28800 seconds; New Delhi, 19800
 // No DST - plants don't care about civic time
 //const long utcOffset = -28800; // PST
@@ -147,7 +150,7 @@ byte mac[] = {
   0x00, 0x3b, 0xBB, 0xA1, 0xDE, 0x07
 };
 
-unsigned int localPort = 8888;       // local port to listen for UDP packets
+unsigned int localPort = 8888;       // local port to listen for NTP UDP packets
 
 //char timeServer[] = "pool.ntp.org"; // time.nist.gov NTP server
 char timeServer[] = "192.168.1.150"; // was 1.12, now maya  (230) or kaju-linux (150)
@@ -162,9 +165,11 @@ byte packetBuffer[ NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing pack
 int ntpPacketSize = 0;
 unsigned long ntpLastTime = 0;
 
-// A UDP instance to let us send and receive packets over UDP
+// A UDP instance to let us send and receive packets over UDP for NTP
 EthernetUDP Udp;
 
+// UDP broadcast of our status and IP address
+EthernetUDP UdpStatus;
 
 // Initialize the Ethernet client library
 // with the IP address and port of the server
@@ -312,6 +317,7 @@ void setup() {
     printIPAddress();
     Udp.begin(localPort);
     //relayTestState = 1;
+    UdpStatus.begin(8981);
   }
   
 }
@@ -536,6 +542,9 @@ int loop_tcpserver()
     //Serial.println("client disconnected");
     //Ethernet.maintain();
 
+    // FIXME avoid sending too close to previous broadcast
+    broadcast_status();
+    
     return 0;
 } // loop_webserver()
 
@@ -643,6 +652,33 @@ int loop_time()
   return 0;
 }
 
+// Broadcast status via UDP and return bytes sent
+int broadcast_status()
+{
+    int bytesSent =  0;
+    // set all bytes in the buffer to 0
+    memset(packetBuffer, 0, NTP_PACKET_SIZE);
+    packetBuffer[0] = 0x64;   // LI, Version, Mode
+    packetBuffer[1] = 0x65;     // Stratum, or type of clock
+    packetBuffer[2] = 0x66;     // Polling Interval
+    packetBuffer[3] = 0x67;  // Peer Clock Precision
+    packetBuffer[4] = r1state;
+    packetBuffer[5] = r2state;
+    packetBuffer[6] = r3state;
+    packetBuffer[7] = r4state;
+    packetBuffer[8] = Ethernet.localIP()[0];
+    packetBuffer[9] = Ethernet.localIP()[1];
+    packetBuffer[10] = Ethernet.localIP()[2];
+    packetBuffer[11] = Ethernet.localIP()[3];
+    memcpy( &packetBuffer[12],  mac, 6 );
+    strcpy( &packetBuffer[18], version.c_str() );
+    UdpStatus.beginPacket("255.255.255.255", 8981);
+    bytesSent = UdpStatus.write(packetBuffer, 18 + 12);
+    UdpStatus.endPacket();
+    //Serial.println("UDP broadcast sent at " + String(time_utc_sec) );
+    return bytesSent;
+}
+
 int loop_task()
 {
   long time_delta = time_utc_sec - lastChange;
@@ -658,7 +694,13 @@ int loop_task()
   decTime = hms_hour * 10000L + hms_minute * 100L + hms_second;
   //Serial.println("tus=" + String(time_utc_sec) + " hms " + String(hms_hour) + ":" + String(hms_minute) + " dt " + String(decTime));
   lastChange = time_utc_sec;
-  // 1-minute
+  // 10s
+  if (time_utc_sec % 10 == 0 && time_utc_sec != lastFlipFlop)
+  {
+    // Broadcast info
+    lastFlipFlop = time_utc_sec;
+    broadcast_status();
+  }
   // 5-minute
   /****
   if (time_utc_sec % DUTY_CYCLE== 0 && time_utc_sec != lastFlipFlop) {
