@@ -34,7 +34,7 @@
 #include <EthernetUdp.h>
 
 // Maximum length of VERSION_STR is 12
-#define VERSION_STR  "1.0.14"
+#define VERSION_STR  "1.0.15"
 String version = VERSION_STR;
 
 // Offset from UTC to local standard time in seconds (e.g. Los Angeles is -8 hours or -28800 seconds; New Delhi, 19800
@@ -77,6 +77,9 @@ int r1state = 0; // Relay 1 aka a
 int r2state = 0; // Relay 2 aka b
 int r3state = 0; // Relay 3 aka c
 int r4state = 0; // Relay 4 aka d
+
+// Last request number
+int lastRequestNumber = -1; // Out of valid range 0 - 999
 
 int pins[] = { 7, 6, 9, 8 };
 
@@ -501,6 +504,26 @@ int loop_dhcp()
   return 0;
 } // loop_dhcp()
 
+// Get single-digit value from a token, e.g. getTokenValue("a=1;b=2;c=3", "a=", 0) returns 1
+int getTokenValue(String source, String token, int defaultValue)
+{
+  int tokenPos = source.indexOf(token);
+  if (tokenPos < 0)
+  {
+    return defaultValue;
+  }
+  return source.substring(tokenPos+token.length(), tokenPos+token.length()+1).toInt();
+}
+
+int getLengthToken(String source, String token, int numberDigits)
+{
+  int tokenPos = source.indexOf(token);
+  if (tokenPos < 0)
+  {
+    return 0;
+  }
+  return source.substring(tokenPos + token.length(), tokenPos + token.length() + numberDigits).toInt();
+}
 
 int loop_tcpserver()
 {
@@ -511,24 +534,29 @@ int loop_tcpserver()
     // an http request ends with a blank line
     boolean currentLineIsBlank = true;
     String curLine;
-    while (client.connected()) 
+    if (client.connected()) 
     {
       while (client.available()) 
       {
         char c = client.read();
         curLine += c;
       }
+      int incomingRequest = getLengthToken(curLine, "rn=", 3);
+      if (incomingRequest == lastRequestNumber)
+      {
+        // Drop connection and ignore
+        Serial.println("Duplicate request " + String(incomingRequest));
+        client.stop();
+        return 0;
+      }
       if (curLine.length() > 0)
       {
+        lastRequestNumber = incomingRequest;
         Serial.println(curLine);
-        if (curLine.indexOf("a=1")>=0) r1state = 1;
-        else if (curLine.indexOf("a=0")>=0) r1state = 0;
-        if (curLine.indexOf("b=1")>=0) r2state = 1;
-        else if (curLine.indexOf("b=0")>=0) r2state = 0;
-        if (curLine.indexOf("c=1")>=0) r3state = 1;
-        else if (curLine.indexOf("c=0")>=0) r3state = 0;
-        if (curLine.indexOf("d=1")>=0) r4state = 1;
-        else if (curLine.indexOf("d=0")>=0) r4state = 0;
+        r1state = getTokenValue(curLine, "a=", r1state);
+        r2state = getTokenValue(curLine, "b=", r2state);
+        r3state = getTokenValue(curLine, "c=", r3state);
+        r4state = getTokenValue(curLine, "d=", r4state);
         String s;
         s = "a=" + String(r1state) + ";b=" + String(r2state) +  ";c=" + String(r3state) + ";d=" + String(r4state) + " #rcvd:" + curLine;
         client.println(s);
@@ -783,6 +811,28 @@ int setRelay( int index, int on )
     digitalWrite( pins[index], LOW );
     Serial.println( "R on " + String(index)  + " p" + String(pins[index]) );
     relaySetting[index] = 1;
+    // Inject delay for momentary closure
+    if (on > 1)
+    {
+      switch (on)
+      {
+        case 2: delay(250); break;
+        case 3: delay(300); break;
+        case 4: delay(400); break;
+        case 5: delay(500); break;
+        case 6: delay(600); break;
+        case 7: delay(750); break;
+      }
+      digitalWrite( pins[index], HIGH );
+      relaySetting[index] = 0;
+      switch (index)
+      {
+        case 0: r1state = 0; break;
+        case 1: r2state = 0; break;
+        case 2: r3state = 0; break;
+        case 3: r4state = 0; break;
+      }
+    }
     lastRelayChange[index] = time_utc_sec;
     return 1;
   }
