@@ -3,6 +3,7 @@
 
 #include <QMainWindow>
 #include <QUdpSocket>
+#include <QCheckBox>
 
 namespace Ui {
 class MainWindow;
@@ -35,12 +36,26 @@ private slots:
 
     void on_btn500ms_clicked();
 
+    void on_btn250ms_2_clicked();
+
+    void on_btn250ms_3_clicked();
+
+    void on_btn250ms_4_clicked();
+
+    void on_btn500ms_2_clicked();
+
+    void on_btn500ms_3_clicked();
+
+    void on_btn500ms_4_clicked();
+
 private:
     Ui::MainWindow *ui;
     QUdpSocket m_udpListener;
-    int m_relay1Value;
+    int m_relayValue[4];
     int m_requestSerial;
 
+    void signalRelay(QCheckBox *chk, int relayIndex, int durationValue);
+    void resetRelayValue(QCheckBox *chk, int relayIndex);
 };
 
 #endif // MAINWINDOW_H

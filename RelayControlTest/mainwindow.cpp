@@ -12,7 +12,10 @@ MainWindow::MainWindow(QWidget *parent) :
     ui->setupUi(this);
     ui->mainToolBar->hide();
     ui->menuBar->hide();
-    m_relay1Value = 1;
+    m_relayValue[0] = 1;
+    m_relayValue[1] = 1;
+    m_relayValue[2] = 1;
+    m_relayValue[3] = 1;
     m_requestSerial = qrand() % 1000; // Get value from 0 to 999
     QTimer::singleShot(0, this, SLOT(Init()));
 }
@@ -51,18 +54,55 @@ void MainWindow::on_chkRelay4_clicked(bool checked)
     QTimer::singleShot(0, this, SLOT(sendState()));
 }
 
+void MainWindow::signalRelay(QCheckBox *chk, int relayIndex, int durationValue)
+{
+    qDebug() << "relay" << (relayIndex + 1) << durationValue;
+    if (relayIndex < 0 || relayIndex >= 4)
+    {
+        qWarning() << "Invalid index";
+        return;
+    }
+    m_relayValue[relayIndex] = durationValue;
+    chk->setChecked(true);
+    QTimer::singleShot(0, this, SLOT(sendState()));
+}
+
 void MainWindow::on_btn250ms_clicked()
 {
-    m_relay1Value = 2;
-    qDebug() << "relay1" << m_relay1Value;
-    ui->chkRelay1->setChecked(true);
-    QTimer::singleShot(0, this, SLOT(sendState()));
+    signalRelay(ui->chkRelay1, 0, 2);
 }
 
 void MainWindow::on_btn500ms_clicked()
 {
-    m_relay1Value = 5;
-    qDebug() << "relay1" << m_relay1Value;
-    ui->chkRelay1->setChecked(true);
-    QTimer::singleShot(0, this, SLOT(sendState()));
+    signalRelay(ui->chkRelay1, 0, 5);
+}
+
+void MainWindow::on_btn250ms_2_clicked()
+{
+    signalRelay(ui->chkRelay2, 1, 2);
+}
+
+void MainWindow::on_btn250ms_3_clicked()
+{
+    signalRelay(ui->chkRelay3, 2, 2);
+}
+
+void MainWindow::on_btn250ms_4_clicked()
+{
+    signalRelay(ui->chkRelay4, 3, 2);
+}
+
+void MainWindow::on_btn500ms_2_clicked()
+{
+    signalRelay(ui->chkRelay2, 1, 5);
+}
+
+void MainWindow::on_btn500ms_3_clicked()
+{
+    signalRelay(ui->chkRelay3, 2, 5);
+}
+
+void MainWindow::on_btn500ms_4_clicked()
+{
+    signalRelay(ui->chkRelay4, 3, 5);
 }

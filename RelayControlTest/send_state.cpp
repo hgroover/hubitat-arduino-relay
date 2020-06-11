@@ -16,18 +16,17 @@ void MainWindow::sendState()
     }
     QString sCmd(QString().sprintf("rn=%03d;a=%d;b=%d;c=%d;d=%d",
                                    m_requestSerial,
-                                   ui->chkRelay1->isChecked() ? m_relay1Value : 0,
-                                   ui->chkRelay2->isChecked() ? 1 : 0,
-                                   ui->chkRelay3->isChecked() ? 1 : 0,
-                                   ui->chkRelay4->isChecked() ? 1 : 0));
+                                   ui->chkRelay1->isChecked() ? m_relayValue[0] : 0,
+                                   ui->chkRelay2->isChecked() ? m_relayValue[1] : 0,
+                                   ui->chkRelay3->isChecked() ? m_relayValue[2] : 0,
+                                   ui->chkRelay4->isChecked() ? m_relayValue[3] : 0));
     m_requestSerial = (m_requestSerial + 1) % 1000;
     qDebug().noquote() << "sendState" << sCmd;
-    // Reset relay 1 value
-    if (m_relay1Value > 1)
-    {
-        m_relay1Value = 1;
-        ui->chkRelay1->setChecked(false);
-    }
+    // Reset relay values
+    resetRelayValue(ui->chkRelay1, 0);
+    resetRelayValue(ui->chkRelay2, 1);
+    resetRelayValue(ui->chkRelay3, 2);
+    resetRelayValue(ui->chkRelay4, 3);
     QTcpSocket sock;
     sock.connectToHost(addr, 8981);
     if (!sock.waitForConnected(500))
@@ -50,5 +49,15 @@ void MainWindow::sendState()
     else
     {
         qDebug() << "No response";
+    }
+}
+
+void MainWindow::resetRelayValue(QCheckBox *chk, int relayIndex)
+{
+    if (relayIndex < 0 || relayIndex >= 4) return;
+    if (m_relayValue[relayIndex] > 1)
+    {
+        m_relayValue[relayIndex] = 1;
+        chk->setChecked(false);
     }
 }
