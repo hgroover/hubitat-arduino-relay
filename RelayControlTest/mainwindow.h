@@ -21,6 +21,7 @@ private slots:
     void Init();
     void on_datagramReceived();
     void sendState();
+    void queryState();
 
     void on_btnQuit_clicked();
 
@@ -56,6 +57,7 @@ private:
 
     void signalRelay(QCheckBox *chk, int relayIndex, int durationValue);
     void resetRelayValue(QCheckBox *chk, int relayIndex);
+    bool sendTcpCmd(QString sCmd);
 };
 
 #endif // MAINWINDOW_H

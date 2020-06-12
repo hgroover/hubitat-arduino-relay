@@ -7,6 +7,7 @@
 #include <QNetworkInterface>
 #include <QHostAddress>
 #include <QAbstractSocket>
+#include <QTimer>
 
 void MainWindow::Init()
 {
@@ -29,5 +30,8 @@ void MainWindow::Init()
         ui->statusBar->showMessage("Listening on port 8981", 5000);
         qDebug() << "Connecting listener";
         connect( &m_udpListener, SIGNAL(readyRead()), this, SLOT(on_datagramReceived()) );
+        // This won't help at all, since we don't have an IP address until we get the first
+        // broadcast, which will also have the state values...
+        //QTimer::singleShot(0, this, SLOT(queryState()));
     }
 }

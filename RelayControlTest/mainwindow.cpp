@@ -3,6 +3,7 @@
 
 #include <QDebug>
 #include <QTimer>
+#include <QDateTime>
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -16,6 +17,7 @@ MainWindow::MainWindow(QWidget *parent) :
     m_relayValue[1] = 1;
     m_relayValue[2] = 1;
     m_relayValue[3] = 1;
+    qsrand(QDateTime::currentMSecsSinceEpoch());
     m_requestSerial = qrand() % 1000; // Get value from 0 to 999
     QTimer::singleShot(0, this, SLOT(Init()));
 }
