@@ -625,7 +625,8 @@ int loop_tcpserver()
         r3state = getTokenValue(curLine, "c=", r3state);
         r4state = getTokenValue(curLine, "d=", r4state);
         String s;
-        s = "a=" + String(r1state) + ";b=" + String(r2state) +  ";c=" + String(r3state) + ";d=" + String(r4state) + " #rcvd:" + curLine;
+        // Incoming format is rn=<ddd>;a=<d>;b=<d>;c=<d>;d=<d> or rn=<ddd>;query but response is always JSON
+        s = "{\"a\":" + String(r1state) + ",\"b\":" + String(r2state) +  ",\"c\":" + String(r3state) + ",\"d\":" + String(r4state) + ",\"rn\":" + String(lastRequestNumber) + "}";
         client.println(s);
       }
     } // while connected
