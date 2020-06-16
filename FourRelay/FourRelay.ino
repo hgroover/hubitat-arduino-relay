@@ -481,7 +481,7 @@ int loop_ntp()
       Serial.println("tus=" + String(time_utc_sec) + " hms " + String(hms_hour) + ":" + String(hms_minute) + " dt " + String(decTime));
     } // Valid NTP time received
   }
-  //else Serial.println("No NTP response");
+  else Serial.println("No NTP response");
 
    }
    return 0;
