@@ -62,6 +62,8 @@ metadata {
 def installed(){
     def networkID = device.deviceNetworkId
     
+	// Useful info on UDP broadcast: https://community.hubitat.com/t/udp-broadcast-support/3957/23
+	
 	device.requestNumber = 101
     createChildDevices()
     refresh()
@@ -97,9 +99,13 @@ def createChildDevices(){
 
 // parse events into attributes
 def parse(String description) {
+    // Older (1.15) firmware supplied a=1;b=0;c=0;d=0 #rcvd: a=1
+	// 1.16 firmware responds with json:  {"a":1;"c":0;"d":0;}
+	// parseLanMessage apparently expects something like an HTTP response.
     logDebug "Parsing '${description}'"
-    def msg = parseLanMessage(description)
-    //logDebug "JSON: ${msg.json}"
+	Byte[] respArray = description.decodeHex()
+    def msg = parseJson(new String(respArray))
+    logDebug "JSON: ${msg}"
     def networkID = device.deviceNetworkId
 
     childRelay1 = getChildDevice("${networkID}-Relay-1")
@@ -107,21 +113,22 @@ def parse(String description) {
 	childRelay3 = getChildDevice("${networkID}-Relay-3")
 	childRelay4 = getChildDevice("${networkID}-Relay-4")
 
-    if(msg?.json?.Relay1){
-        logDescriptionText "Relay 1: ${msg.json.Relay1}"
-        childRelay1.sendEvent(name: "switch", value: msg.json.Relay1)        
+    if(msg?.a){
+        logDescriptionText "Relay 1: ${msg.a}"
+		// All momentary actions end in off
+        childRelay1.sendEvent(name: "switch", value: (msg.a == 1 ? "on" : "off"))
     }
-    if(msg?.json?.Relay2){
-        logDescriptionText "Relay 2: ${msg.json.Relay2}"
-        childRelay2.sendEvent(name: "switch", value: msg.json.Relay2)      
+    if(msg?.b){
+        logDescriptionText "Relay 2: ${msg.b}"
+        childRelay2.sendEvent(name: "switch", value: (msg.b == 1 ? "on" : "off"))      
     }
-    if(msg?.json?.Relay3){
-        logDescriptionText "Relay 3: ${msg.json.Relay3}"
-        childRelay3.sendEvent(name: "switch", value: msg.json.Relay3)      
+    if(msg?.c){
+        logDescriptionText "Relay 3: ${msg.c}"
+        childRelay3.sendEvent(name: "switch", value: (msg.c == 1 ? "on" : "off"))      
     }
-    if(msg?.json?.Relay4){
-        logDescriptionText "Relay 4: ${msg.json.Relay4}"
-        childRelay4.sendEvent(name: "switch", value: msg.json.Relay4)      
+    if(msg?.d){
+        logDescriptionText "Relay 4: ${msg.d}"
+        childRelay4.sendEvent(name: "switch", value: (msg.d == 1 ? "on" : "off"))      
     }
   
 	// hgroover - unclear what the parent device switch state is used for...
@@ -151,18 +158,21 @@ def parseProximity(proxRaw){
 //for now, we'll just have these turn on both relays
 //in the future, we plan on providing the ability to disable either relay via the Android app
 def on(){
-    def action = []
-    action << relay1On()
-    action << relay2On()
-    return action
+    log.warn "all-on not supported"
+    //def action = []
+    //action << relay1On()
+    //action << relay2On()
+    //return action
 }
 def off(){
-    def action = []
-    action << relay1Off()
-    action << relay2Off()
-    return action
+    log.warn "all-off not supported"
+    //def action = []
+    //action << relay1Off()
+    //action << relay2Off()
+    //return action
 }
 def push(){
+    log.warn "all-push not supported"
 }
 
 //TODO: change actions to POST commands on the server and here
@@ -203,7 +213,7 @@ def relay2On(){
 def relay2Off(){
     def networkID = device.deviceNetworkId
     childRelay2 = getChildDevice("${networkID}-Relay-2")
-    childRelay2.sendEvent(name: "switch", value: "on")    
+    childRelay2.sendEvent(name: "switch", value: "off")    
     //httpGET("/relay/bottom/off")
 	tcpSend("b=0")
 }
@@ -215,8 +225,8 @@ def relay2Toggle(){
 def relay2Push(){
 	def networkID = device.deviceNetworkId
 	childRelay2 = getChildDevice("${networkID}-Relay-2")
-	// No need to send event?
-	tcpSend("a=5")
+    childRelay2.sendEvent(name: "switch", value: "off")    
+	tcpSend("b=5")
 }
 
 def relay3On(){   
@@ -229,7 +239,7 @@ def relay3On(){
 def relay3Off(){
     def networkID = device.deviceNetworkId
     childRelay = getChildDevice("${networkID}-Relay-3")
-    childRelay.sendEvent(name: "switch", value: "on")    
+    childRelay.sendEvent(name: "switch", value: "off")    
     //httpGET("/relay/bottom/off")
 	tcpSend("c=0")
 }
@@ -241,7 +251,7 @@ def relay3Toggle(){
 def relay3Push(){
 	def networkID = device.deviceNetworkId
 	childRelay = getChildDevice("${networkID}-Relay-3")
-	// No need to send event?
+    childRelay.sendEvent(name: "switch", value: "off")    
 	tcpSend("c=5")
 }
 
@@ -255,7 +265,7 @@ def relay4On(){
 def relay4Off(){
     def networkID = device.deviceNetworkId
     childRelay = getChildDevice("${networkID}-Relay-4")
-    childRelay.sendEvent(name: "switch", value: "on")    
+    childRelay.sendEvent(name: "switch", value: "off")
     //httpGET("/relay/bottom/off")
 	tcpSend("d=0")
 }
@@ -267,7 +277,7 @@ def relay4Toggle(){
 def relay4Push(){
 	def networkID = device.deviceNetworkId
 	childRelay = getChildDevice("${networkID}-Relay-4")
-	// No need to send event?
+    childRelay.sendEvent(name: "switch", value: "off")
 	tcpSend("d=5")
 }
 
@@ -298,11 +308,7 @@ def poll(){
 
 def refresh(){
     //manually get the state of sensors and relays via TCP query
-    def httpCalls = []
-    httpCalls << retrieveRelay1()
-    httpCalls << retrieveRelay2()
-    httpCalls << setupEventSubscription()
-    return httpCalls
+	tcpSend("query")
 }
 
 
