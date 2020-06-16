@@ -20,6 +20,7 @@ public:
 private slots:
     void Init();
     void on_datagramReceived();
+    void on_ssdpReceived();
     void sendState();
     void queryState();
 
@@ -52,6 +53,8 @@ private slots:
 private:
     Ui::MainWindow *ui;
     QUdpSocket m_udpListener;
+    QUdpSocket m_ssdpListener;
+    QString m_deviceVer;
     int m_relayValue[4];
     int m_requestSerial;
 

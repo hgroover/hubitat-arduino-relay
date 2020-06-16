@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "version.h"
 
 #include <QDebug>
 #include <QTimer>
@@ -8,11 +9,13 @@
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow),
-    m_udpListener(this)
+    m_udpListener(this),
+    m_ssdpListener(this)
 {
     ui->setupUi(this);
     ui->mainToolBar->hide();
     ui->menuBar->hide();
+    setWindowTitle(windowTitle() + " v" VERSION_STR);
     m_relayValue[0] = 1;
     m_relayValue[1] = 1;
     m_relayValue[2] = 1;

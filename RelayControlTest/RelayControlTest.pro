@@ -28,10 +28,12 @@ SOURCES += \
         mainwindow.cpp \
     init.cpp \
     datagram_received.cpp \
-    send_state.cpp
+    send_state.cpp \
+    ssdp_received.cpp
 
 HEADERS += \
-        mainwindow.h
+        mainwindow.h \
+    version.h
 
 FORMS += \
         mainwindow.ui
