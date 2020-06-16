@@ -18,13 +18,13 @@
    rely on the Arduino onboard converter, which often fails on cheaper knockoffs
    like the Elegoo Uno R3. The 5V pass-thru should support the needs of the
    SainSmart relay board, which has relatively high current requirements.
- 
- created 18 Dec 2009
+
+ Created 13 Jun 2020 by Henry Groover
+ Updated to add SSDP and respond via JSON 
+ based on sketch created 18 Dec 2009
  by David A. Mellis
  modified 9 Apr 2012
  by Tom Igoe, based on work by Adrian McEwen
- Update 4 December 2015 hgroover - added temp / humidity sensor
- and switched to 4-position relay
  */
 
 #include "math.h"
@@ -34,7 +34,7 @@
 #include <EthernetUdp.h>
 
 // Maximum length of VERSION_STR is 12
-#define VERSION_STR  "1.0.15"
+#define VERSION_STR  "1.0.16"
 String version = VERSION_STR;
 
 // Offset from UTC to local standard time in seconds (e.g. Los Angeles is -8 hours or -28800 seconds; New Delhi, 19800
@@ -44,6 +44,10 @@ const long utcOffset = -21600; // CST
 
 // Do we have ethernet?
 #define HAS_ETHERNET  1
+
+// Do we have multicast (required for SSDP and not supported by Ethernet library)?
+// May require library mentioned here: https://tkkrlab.nl/wiki/Arduino_UDP_multicast
+#define HAS_MULTICAST 0
 
 // Do we have CT connections? Set to number on analog pins 2-5
 #define HAS_CURRENT_SENSOR  0
@@ -148,16 +152,22 @@ unsigned long dectime_lights_off =  180000L;
 
 // Newer Ethernet shields have a MAC address printed on a sticker on the shield
 // This is a locally-administered address; see https://en.wikipedia.org/wiki/MAC_address
-// Use the unassigned block from 00-03-00 to 00-51-ff
+// Use the unassigned block from 00-03-00 to 00-51-ff. Note that the first 3 bytes
+// will determine a "vendor" and starting with 0x00 0x3b 0xbb will yield a DHCP name WizNetxxyyzz
+// where xx, yy and zz are the last three hex bytes in the MAC.
 byte mac[] = {
   0x00, 0x3b, 0xBB, 0xA1, 0xDE, 0x07
 };
 
+// Change if a conflict exists. Note that port is reported over SSDP.
+// 8981 is reported unused by https://en.wikipedia.org/wiki/List_of_TCP_and_UDP_port_numbers
+const unsigned int apiPort = 8981;      // Local port for API requests
+
 unsigned int localPort = 8888;       // local port to listen for NTP UDP packets
 
+// Get timeserver IP from incoming tcp ts=<ipv4>
 //char timeServer[] = "pool.ntp.org"; // time.nist.gov NTP server
-char timeServer[] = "192.168.1.150"; // was 1.12, now maya  (230) or kaju-linux (150)
-byte staticIP[] = {192,168,1,20};
+String timeServer = "192.168.1.1";
 
 
 const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
@@ -171,17 +181,27 @@ unsigned long ntpLastTime = 0;
 // A UDP instance to let us send and receive packets over UDP for NTP
 EthernetUDP Udp;
 
-// UDP broadcast of our status and IP address
+// UDP broadcast of our status and IP address on API port
 EthernetUDP UdpStatus;
 
-// Initialize the Ethernet client library
-// with the IP address and port of the server
-// that you want to connect to (port 80 is default for HTTP):
-EthernetClient client;
+#if HAS_MULTICAST
+// SSDP broadcast
+EthernetUDP UdpSSDP;
+#endif
+
 // Initialize the Ethernet server library
 // with the IP address and port you want to use
 // port 8981 needs to be set in Hubitat code as well
-EthernetServer server(8981);
+EthernetServer server(apiPort);
+
+#if HAS_MULTICAST
+// uuid for SSDP: 6cefb95b-72c1-4d89-974c-584dbb15b23e (UUID v4, all random numbers from uuidgenerator.net)
+// SSDP info: https://stackoverflow.com/questions/13382469/ssdp-protocol-implementation
+// SSDP in Chapter 1: http://upnp.org/specs/arch/UPnP-arch-DeviceArchitecture-v1.1.pdf
+// Attempt to implement SSDP: https://forum.arduino.cc/index.php?topic=271629.0
+// A library that may allow multicast (and therefore SSDP) to work: https://tkkrlab.nl/wiki/Arduino_UDP_multicast
+String uuid = "6cefb95b-72c1-4d89-974c-584dbb15b23e";
+#endif
 
 int hasNet = 0;
 int relayTestState = 0; // if 1, cycle through relays on startup
@@ -304,11 +324,7 @@ void setup() {
   //Serial.println( "Local times are in non-civic standard time (no DST adjustment)" );
   
   // start the Ethernet connection; omit static IP to use DHCP
-  //if (Ethernet.begin(mac, staticIP) == 0) {
-  //  Serial.println("Eth fail");
-  //}
-  //else
-  if (Ethernet.begin(mac) == 0) { // Omit static IP to get dynamic
+  if (Ethernet.begin(mac) == 0) { // Get dynamic IP
     Serial.println("Failed to get IP address");
     for (;;) ;
   }
@@ -320,7 +336,11 @@ void setup() {
     printIPAddress();
     Udp.begin(localPort);
     //relayTestState = 1;
-    UdpStatus.begin(8981);
+    // Set local port here, remote port in beginPacket
+    UdpStatus.begin(apiPort);
+    #if HAS_MULTICAST
+    UdpSSDP.begin(1900);
+    #endif
   }
   
 }
@@ -400,13 +420,13 @@ int loop_ntp()
 {
    if (ntpState == 0)
    {
-      sendNTPpacket(timeServer); // send an NTP packet to a time server
+      sendNTPpacket(timeServer.c_str()); // send an NTP packet to a time server
       ntpState = millis();
         // wait to see if a reply is available
   delay(2000);
   ntpPacketSize = Udp.parsePacket();
   if (ntpPacketSize) {
-    //Serial.println("Got udp response from ntp request");
+    Serial.println("Got udp response from ntp request " + String(ntpPacketSize));
     // We've received a packet, read the data from it
     Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
 
@@ -456,6 +476,9 @@ int loop_ntp()
       Serial.println(epoch % 60); // print the second
       ***/
       //Serial.println("Local non-civic time is " + hms(epoch+utcOffset) );
+      hms(time_utc_sec + utcOffset);
+      decTime = hms_hour * 10000L + hms_minute * 100L + hms_second;
+      Serial.println("tus=" + String(time_utc_sec) + " hms " + String(hms_hour) + ":" + String(hms_minute) + " dt " + String(decTime));
     } // Valid NTP time received
   }
   //else Serial.println("No NTP response");
@@ -525,6 +548,35 @@ int getLengthToken(String source, String token, int numberDigits)
   return source.substring(tokenPos + token.length(), tokenPos + token.length() + numberDigits).toInt();
 }
 
+// Read incoming UDP queries on our API port
+int loop_udpquery()
+{
+  int queryPacket = UdpStatus.parsePacket();
+  int gotQuery = 0;
+  while (queryPacket)
+  {
+    // We've received a packet, read the data from it
+    memset( packetBuffer, 0, NTP_PACKET_SIZE );
+    UdpStatus.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
+    String s((char *)packetBuffer);
+    if (s == "hgr-ardr-qry")
+    {
+      gotQuery = 1;
+    }
+    else
+    {
+      Serial.println("Unknown udp: " + s);
+    }
+    // Get next packet
+    queryPacket = UdpStatus.parsePacket();
+  }
+  if (gotQuery)
+  {
+    broadcast_status();
+  }
+  return gotQuery;
+}
+
 int loop_tcpserver()
 {
     EthernetClient client = server.available();
@@ -540,6 +592,21 @@ int loop_tcpserver()
       {
         char c = client.read();
         curLine += c;
+      }
+      if (curLine.startsWith("ts="))
+      {
+        // Not worried about DDOS as we severely time-limit NTP queries
+        timeServer = curLine.substring(3);
+        if (timeServer.length() >= 7)
+        {
+          ntpState = 0;
+          Serial.println("New ts:" + timeServer);
+        }
+        else
+        {
+          Serial.println("Invalid or empty ts");
+        }
+        return 0;
       }
       int incomingRequest = getLengthToken(curLine, "rn=", 3);
       if (incomingRequest == lastRequestNumber)
@@ -684,12 +751,13 @@ int loop_time()
 int broadcast_status()
 {
     int bytesSent =  0;
+    #if 0
     // set all bytes in the buffer to 0
     memset(packetBuffer, 0, NTP_PACKET_SIZE);
-    packetBuffer[0] = 0x64;   // LI, Version, Mode
-    packetBuffer[1] = 0x65;     // Stratum, or type of clock
-    packetBuffer[2] = 0x66;     // Polling Interval
-    packetBuffer[3] = 0x67;  // Peer Clock Precision
+    packetBuffer[0] = 0x64;
+    packetBuffer[1] = 0x65;
+    packetBuffer[2] = 0x66;
+    packetBuffer[3] = 0x67;
     packetBuffer[4] = r1state;
     packetBuffer[5] = r2state;
     packetBuffer[6] = r3state;
@@ -700,9 +768,23 @@ int broadcast_status()
     packetBuffer[11] = Ethernet.localIP()[3];
     memcpy( &packetBuffer[12],  mac, 6 );
     strcpy( &packetBuffer[18], version.c_str() );
-    UdpStatus.beginPacket("255.255.255.255", 8981);
+    UdpStatus.beginPacket("255.255.255.255", apiPort);
     bytesSent = UdpStatus.write(packetBuffer, 18 + 12);
     UdpStatus.endPacket();
+    #else
+    // Use compact JSON
+    String s;
+    UdpStatus.beginPacket("255.255.255.255", apiPort);
+    bytesSent = UdpStatus.write("{\"hgr-ardr\":\"");
+    bytesSent = bytesSent + UdpStatus.write(version.c_str());
+    bytesSent = bytesSent + UdpStatus.write("\",\"ip4\":\"");
+    bytesSent = bytesSent + UdpStatus.write(localIPv4().c_str());
+    bytesSent = bytesSent + UdpStatus.write("\",");
+    s = "\"r1\":" + String(r1state) + ",\"r2\":" + String(r2state) + ",\"r3\":" + String(r3state) + ",\"r4\":" + String(r4state) + "}";
+    bytesSent = bytesSent + UdpStatus.write(s.c_str());
+    UdpStatus.endPacket();
+    //Serial.println("UDP bc at " + String(time_utc_sec) + " bytes " + String(bytesSent));
+    #endif
     //Serial.println("UDP broadcast sent at " + String(time_utc_sec) );
     return bytesSent;
 }
@@ -727,7 +809,19 @@ int loop_task()
   {
     // Broadcast info
     lastFlipFlop = time_utc_sec;
-    broadcast_status();
+    if (time_utc_sec % 20 == 0)
+    {
+      #if HAS_MULTICAST
+      // ssdp
+      ssdpMulticast();
+      #else
+      broadcast_status();
+      #endif
+    }
+    else
+    {
+      broadcast_status();
+    }
   }
   // 5-minute
   /****
@@ -797,6 +891,7 @@ void loop()
 
   loop_led();  
   loop_dhcp();
+  loop_udpquery();
   loop_tcpserver();
 
 }
@@ -849,14 +944,7 @@ int setRelay( int index, int on )
 
 void printIPAddress()
 {
-  Serial.print("IP: ");
-  for (byte thisByte = 0; thisByte < 4; thisByte++) {
-    // print the value of each byte of the IP address:
-    Serial.print(Ethernet.localIP()[thisByte], DEC);
-    Serial.print(".");
-  }
-
-  Serial.println();
+  Serial.println("IP: " + localIPv4());
 }
 
 // send an NTP request to the time server at the given address
@@ -881,6 +969,35 @@ void sendNTPpacket(char* address) {
   Udp.write(packetBuffer, NTP_PACKET_SIZE);
   Udp.endPacket();
 }
+
+String localIPv4()
+{
+  return String(Ethernet.localIP()[0]) + "." + String(Ethernet.localIP()[1]) + "." +  String(Ethernet.localIP()[2]) + "." + String(Ethernet.localIP()[3]);
+}
+
+#if HAS_MULTICAST
+// ssdp multicast via UDP to advertise
+void ssdpMulticast()
+{
+  String s;
+  if (0 == UdpSSDP.beginPacket("239.255.255.250", 1900))
+  {
+    Serial.println("ssdp multi beginPacket failed");
+    return;
+  }
+  int bytesSent = 0;
+  bytesSent = bytesSent +  UdpSSDP.write("NOTIFY * HTTP/1.1\r\nServer: ArdRelay/1.16\r\nHOST: 239.255.255.250:1900\r\nCACHE-CONTROL: max-age=900\r\n");
+  s= "Location: http://";
+  s = s + localIPv4();
+  s = s + ":" + String(apiPort) + "/svc.xml\r\n";
+  bytesSent = bytesSent + UdpSSDP.write(s.c_str(), s.length());
+  bytesSent = bytesSent + UdpSSDP.write("NTS: ssdp:alive\r\nNT: upnp:rootdevice\r\n");
+  s = "USN: uuid:" + uuid + "::upnp:rootdevice\r\n\r\n";
+  bytesSent = bytesSent + UdpSSDP.write(s.c_str(), s.length());
+  UdpSSDP.endPacket();
+  Serial.println("Sent: " + String(bytesSent));
+}
+#endif
 
 void dumpHist( EthernetClient *pc, char *label, int *hist )
 {
@@ -910,44 +1027,6 @@ void dumpRelayHist( EthernetClient *pc, byte *hist )
     pc->print( " " + String(hist[n]) );
   }
   pc->println( "</p>" );
-}
-
-int timedValve( int index, long decTime, long decTimeOn, long decTimeOff, int minTemp )
-{
-  // Manual?
-  if (relaySetting[index] & 0x02) 
-  {
-    Serial.println("Relay off, no valve change");
-    return 0;
-  }
-  //Serial.print( "dectime: ");
-  //Serial.print( decTime );
-  //Serial.print( " on: " );
-  //Serial.print( decTimeOn );
-  //Serial.print( " off: " );
-  //Serial.print( decTimeOff );
-  if (decTime < decTimeOn || decTime >= decTimeOff)
-  {
-    if (relaySetting[index])
-    {
-      Serial.println("Assert off " + String(index) + " p" + String(pins[index]));
-      relaySetting[index] = 0;
-      digitalWrite( pins[index], HIGH );
-      return 1;
-    }
-    //Serial.println("Not yet "+String(decTime));
-    return 0;
-   }
-   if (decTime >= decTimeOn && relaySetting[index] == 0 && insideTemp >= minTemp)
-   {
-     Serial.println("Assert on " + String(index) + " p" + String(pins[index]));
-     relaySetting[index] = 1;
-     digitalWrite(pins[index], LOW);
-     return 1;
-   }
-   // No change
-   //Serial.println("Out of time " + String(decTime));
-   return 0;
 }
 
 String SecondsPlusMS(unsigned long second_part, unsigned long ms_part )
