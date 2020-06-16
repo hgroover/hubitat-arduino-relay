@@ -34,7 +34,7 @@
 #include <EthernetUdp.h>
 
 // Maximum length of VERSION_STR is 12
-#define VERSION_STR  "1.0.16"
+#define VERSION_STR  "1.0.17"
 String version = VERSION_STR;
 
 // Offset from UTC to local standard time in seconds (e.g. Los Angeles is -8 hours or -28800 seconds; New Delhi, 19800
@@ -167,7 +167,7 @@ unsigned int localPort = 8888;       // local port to listen for NTP UDP packets
 
 // Get timeserver IP from incoming tcp ts=<ipv4>
 //char timeServer[] = "pool.ntp.org"; // time.nist.gov NTP server
-String timeServer = "192.168.1.1";
+String timeServer = "192.168.1.1"; // using 129.6.15.28 for time.nist.gov would be rude!
 
 
 const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
@@ -205,7 +205,8 @@ String uuid = "6cefb95b-72c1-4d89-974c-584dbb15b23e";
 
 int hasNet = 0;
 int relayTestState = 0; // if 1, cycle through relays on startup
-unsigned long ntpState = 0;
+unsigned long ntpState = 0;  // if 0, get time via NTP else time of last check
+int ntpSuccess = 0; // Reset when time server is changed
 
 // 4.91 if input is USB power (5V) (recommended for use with relay board)
 // 5.0 if using 12V input power
@@ -418,18 +419,27 @@ int loop_relaytest()
 
 int loop_ntp()
 {
+  int sentRequest = 0;
+  // NTP over UDP will get a response immediately or not at all
    if (ntpState == 0)
    {
       sendNTPpacket(timeServer.c_str()); // send an NTP packet to a time server
       ntpState = millis();
         // wait to see if a reply is available
-  delay(2000);
+      delay(1000);
+      sentRequest = 1;
+   }
+   else
+   {
+      return 0;
+   }
   ntpPacketSize = Udp.parsePacket();
   if (ntpPacketSize) {
-    Serial.println("Got udp response from ntp request " + String(ntpPacketSize));
+    Serial.println("Got udp response from ntp request " + String(ntpPacketSize) + " srvr " + timeServer);
     // We've received a packet, read the data from it
     Udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
-
+    ntpSuccess = 1;
+    
     // the timestamp starts at byte 40 of the received packet and is four bytes,
     // or two words, long. First, extract the two words:
 
@@ -479,11 +489,15 @@ int loop_ntp()
       hms(time_utc_sec + utcOffset);
       decTime = hms_hour * 10000L + hms_minute * 100L + hms_second;
       Serial.println("tus=" + String(time_utc_sec) + " hms " + String(hms_hour) + ":" + String(hms_minute) + " dt " + String(decTime));
+
+      return 1;
     } // Valid NTP time received
   }
-  else Serial.println("No NTP response");
+  else if (sentRequest != 0)
+  {
+    Serial.println("No NTP resp " + timeServer + "!");
+  }
 
-   }
    return 0;
 } // loop_ntp()
 
@@ -597,10 +611,12 @@ int loop_tcpserver()
       {
         // Not worried about DDOS as we severely time-limit NTP queries
         timeServer = curLine.substring(3);
+        timeServer.trim();
         if (timeServer.length() >= 7)
         {
           ntpState = 0;
-          Serial.println("New ts:" + timeServer);
+          ntpSuccess = 0;
+          Serial.println("New ts: [" + timeServer + "]");
         }
         else
         {
@@ -805,6 +821,11 @@ int loop_task()
   decTime = hms_hour * 10000L + hms_minute * 100L + hms_second;
   //Serial.println("tus=" + String(time_utc_sec) + " hms " + String(hms_hour) + ":" + String(hms_minute) + " dt " + String(decTime));
   lastChange = time_utc_sec;
+  // 39s retry if NTP is not successful
+  if (time_utc_sec % 39 == 0 && 0 == ntpSuccess)
+  {
+    ntpState = 0;
+  }
   // 10s
   if (time_utc_sec % 10 == 0 && time_utc_sec != lastFlipFlop)
   {
@@ -846,6 +867,7 @@ int loop_task()
   }
   ****/
   // 10-minute
+  unsigned long curM = millis();
   if (time_utc_sec % SAMPLE_INTERVAL_SEC == 0)
   {
     // Save history
@@ -863,7 +885,6 @@ int loop_task()
   }
   // 2 hour NTP adjustment - our crude method for time update produces around 12 minutes drift
   // per 24 hours. Run this check every 2 hours, or if last check was unsuccessful, every 15 minutes.
-  unsigned long curM = millis();
   time_delta = (curM - lastNtpCheck) / 1000;
   if (time_delta < 0 || time_delta >= 7200 || (ntpPacketSize == 0 && time_delta >= 900))
   {
