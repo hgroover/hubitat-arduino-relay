@@ -50,6 +50,8 @@ private slots:
 
     void on_btn500ms_4_clicked();
 
+    void on_btnHexToStr_clicked();
+
 private:
     Ui::MainWindow *ui;
     QUdpSocket m_udpListener;

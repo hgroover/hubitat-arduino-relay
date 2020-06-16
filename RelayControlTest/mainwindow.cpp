@@ -111,3 +111,9 @@ void MainWindow::on_btn500ms_4_clicked()
 {
     signalRelay(ui->chkRelay4, 3, 5);
 }
+
+void MainWindow::on_btnHexToStr_clicked()
+{
+    QByteArray ba(QByteArray::fromHex(ui->txtHexData->text().toLocal8Bit()));
+    ui->txtHexData->setText(ba);
+}
