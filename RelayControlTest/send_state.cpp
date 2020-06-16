@@ -4,6 +4,8 @@
 #include <QDebug>
 #include <QNetworkAddressEntry>
 #include <QTcpSocket>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 void MainWindow::sendState()
 {
@@ -67,7 +69,15 @@ bool MainWindow::sendTcpCmd(QString sCmd)
     if (sock.bytesAvailable() > 0)
     {
         QByteArray response(sock.readAll());
-        qDebug().noquote() << "response:" << response << "len=" << response.length();
+        QJsonDocument doc = QJsonDocument::fromJson(response);
+        if (doc.isEmpty())
+        {
+            qWarning().noquote() << "non-JSON response:" << response << "length" << response.length();
+        }
+        else
+        {
+            qDebug().noquote() << "response to rn:" << doc.object()["rn"].toInt() << doc.object()["a"].toInt() << doc.object()["b"].toInt() << doc.object()["c"].toInt() << doc.object()["d"].toInt();
+        }
     }
     else
     {
